@@ -131,22 +131,27 @@ fn convert_from_url(url: &str, output_file: &mut std::fs::File) -> Result<()> {
         let mut zip_reader: Box<dyn Read> = Box::new(content.reader()) as Box<dyn Read>; 
         match zip::read::read_zipfile_from_stream(&mut zip_reader) {
             Ok(Some(mut file)) => {
-                file.read_to_string(&mut pgn_data).expect("Unable to read pgn data");
-                let game = parse_pgn(pgn_data);
-                match game {
-                    Some(x) => {
-                        println!("{:?}", x.total_games);
-                        match output_file.write_all(&x.data) {
-                            Err(e) => {
-                                println!("Error: {:?}", e);
-                                return Err(e.into());
+                let result = file.read_to_string(&mut pgn_data);
+                match result {
+                    Ok(_) => {
+                        let game = parse_pgn(pgn_data);
+                        match game {
+                            Some(x) => {
+                                println!("{:?} {}", x.total_games, url);
+                                match output_file.write_all(&x.data) {
+                                    Err(e) => {
+                                        println!("Error: {:?}", e);
+                                        return Err(e.into());
+                                    },
+                                    _ => {}
+                                }
                             },
-                            _ => {}
+                            _ => {
+                                println!("Failed to parse game.");
+                            },
                         }
                     },
-                    _ => {
-                        println!("Failed to parse game.");
-                    },
+                    Err(e) => println!("Unexpected error: {:?}", e),
                 }
             }
             Ok(None) => {
@@ -169,7 +174,7 @@ fn convert_from_url(url: &str, output_file: &mut std::fs::File) -> Result<()> {
         let game = parse_pgn(pgn_data);
         match game {
             Some(x) => {
-                println!("{:?}", x.total_games);
+                println!("{:?} {}", x.total_games, url);
                 match output_file.write_all(&x.data) {
                     Err(e) => {
                         println!("Error: {:?}", e);
@@ -209,11 +214,14 @@ fn main() -> Result<()> {
                     serde_json::Value::String(url) => {                
                         let file = Arc::clone(&file);
                         let thread = thread::spawn(move || {
-                            let mut file = file.lock().unwrap();
-                            match convert_from_url(&url, &mut file) {
-                                Err(e) => println!("Unexpected error {:?}", e),
-                                _ => {}
-                            }
+                            let file = file.lock();
+                            match file {
+                                Ok(mut file) => match convert_from_url(&url, &mut file) {
+                                    Err(e) => println!("Unexpected error {:?}", e),
+                                    _ => {}
+                                },
+                                Err(e) => println!("Error: {:?}", e)
+                            };
                         });
                         threads.push(thread);
                     },
