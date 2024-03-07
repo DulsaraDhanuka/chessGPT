@@ -16,6 +16,12 @@ pub struct Token {
     value: u16,
 }
 
+impl PartialEq for Token {
+    fn eq(&self, other: &Self) -> bool {
+        self.value == other.value
+    }
+}
+
 pub struct Tokenizer {
     token_map: HashMap<Uci, Token>,
 }
@@ -24,6 +30,14 @@ impl Tokenizer {
     pub fn new() -> Tokenizer {
         let mut tokenizer = Tokenizer { token_map: HashMap::new() };
         
+        
+
+        println!("{:?}", tokenizer.token_map.capacity());
+
+        return tokenizer;
+    }
+
+    pub fn initialize_token_map(&mut self) {
         let mut idx = 4;
         for from_square in Square::ALL {
             let mut possible_moves = Bitboard::EMPTY;
@@ -35,7 +49,7 @@ impl Tokenizer {
 
             for to_square in possible_moves {
                 let uci = Uci::Normal { from: from_square, to: to_square, promotion: None };
-                tokenizer.token_map.insert(uci, Token { value: idx });
+                self.token_map.insert(uci, Token { value: idx });
                 idx += 1;
             }
 
@@ -52,7 +66,7 @@ impl Tokenizer {
                     for to_square in possible_moves {
                         for promotion in [Role::Bishop, Role::Knight, Role::Rook, Role::Queen] {
                             let uci = Uci::Normal { from: from_square, to: to_square, promotion: Some(promotion) };
-                            tokenizer.token_map.insert(uci, Token { value: idx });
+                            self.token_map.insert(uci, Token { value: idx });
                             idx += 1;
                         }
                     }
@@ -73,7 +87,7 @@ impl Tokenizer {
                     for to_square in possible_moves {
                         for promotion in [Role::Bishop, Role::Knight, Role::Rook, Role::Queen] {
                             let uci = Uci::Normal { from: from_square, to: to_square, promotion: Some(promotion) };
-                            tokenizer.token_map.insert(uci, Token { value: idx });
+                            self.token_map.insert(uci, Token { value: idx });
                             idx += 1;
                         }
                     }
@@ -81,13 +95,9 @@ impl Tokenizer {
                 _ => {},
             }
         }
-
-        println!("{:?}", tokenizer.token_map.capacity());
-
-        return tokenizer;
     }
 
-    pub fn game_start_token(self, outcome: Option<Outcome>) -> Result<Token, anyhow::Error> {
+    pub fn game_start_token(&self, outcome: Option<Outcome>) -> Result<Token, anyhow::Error> {
         return match outcome {
             Some(outcome) => match outcome {
                 Outcome::Decisive { winner } => match winner {
@@ -100,7 +110,9 @@ impl Tokenizer {
         };
     }
 
-    pub fn uci_to_token(self, uci: Uci) -> Result<Token, anyhow::Error> {
+    pub fn uci_to_token(&mut self, uci: Uci) -> Result<Token, anyhow::Error> {
+        if self.token_map.len() == 0 { self.initialize_token_map(); } 
+
         if self.token_map.contains_key(&uci) {
             return Ok(Token { value: self.token_map[&uci].value });
         }
@@ -108,7 +120,44 @@ impl Tokenizer {
         return Err(anyhow!("Invalid uci string found"));
     }
 
-    pub fn game_end_token(self) -> Token {
+    pub fn game_end_token(&self) -> Token {
         return Token { value: 3 };
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::{io::Read, str::FromStr};
+
+    use super::*;
+
+    #[test]
+    fn game_start_token() {
+        let tokenizer = Tokenizer::new();
+        assert_eq!(tokenizer.game_start_token(Option::Some(Outcome::Decisive { winner: Color::White })).unwrap(), Token { value: 0 });
+        assert_eq!(tokenizer.game_start_token(Option::Some(Outcome::Decisive { winner: Color::Black })).unwrap(), Token { value: 1 });
+        assert_eq!(tokenizer.game_start_token(Option::Some(Outcome::Draw)).unwrap(), Token { value: 2 });
+        assert_eq!(tokenizer.game_start_token(Option::None).unwrap_err().to_string(), "Outcome not specified");
+    }
+
+    #[test]
+    fn uci_to_token() {
+        let mut tokenizer = Tokenizer::new();
+        tokenizer.initialize_token_map();
+        
+        let mut uci_strings = String::new();
+        std::fs::File::read_to_string(&mut std::fs::File::open("assets/uci_strings.txt").unwrap(), &mut uci_strings).expect("Unexpected error occured");
+
+        assert_eq!(uci_strings.lines().count(), tokenizer.token_map.len());
+        for uci in uci_strings.lines() {
+            let uci = Uci::from_str(uci).unwrap();
+            assert!(tokenizer.token_map.contains_key(&uci));
+        }
+    }
+
+    #[test]
+    fn game_end_token() {
+        let tokenizer = Tokenizer::new();
+        assert_eq!(tokenizer.game_end_token(), Token { value: 3 });
     }
 }
