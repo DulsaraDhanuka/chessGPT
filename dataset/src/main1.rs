@@ -106,20 +106,26 @@ impl Visitor for PgnFile {
     }
 }
 
-fn parse_pgn(pgn_data: String) -> Option<PgnFile> {
+fn parse_pgn(pgn_data: String, output_file: &mut std::fs::File) -> Result<u32> {
     let mut pgn_buffer = BufferedReader::new_cursor(pgn_data);
     let mut game = PgnFile::new();
     let result = pgn_buffer.read_all(&mut game);
     
     match result {
         Err(e) => {
-            println!("Unexpected error {:?}", e);
-            return None;
+            return Err(e.into());
         },
         _ => {}
     }
 
-    return Some(game);
+    match output_file.write_all(&game.data) {
+        Err(e) => {
+            return Err(e.into());
+        },
+        _ => {}
+    };
+
+    return Ok(game.total_games);
 }
 
 fn convert_from_url(url: &str, output_file: &mut std::fs::File) -> Result<()> {
@@ -131,23 +137,14 @@ fn convert_from_url(url: &str, output_file: &mut std::fs::File) -> Result<()> {
         let mut zip_reader: Box<dyn Read> = Box::new(content.reader()) as Box<dyn Read>; 
         match zip::read::read_zipfile_from_stream(&mut zip_reader) {
             Ok(Some(mut file)) => {
-                let result = file.read_to_string(&mut pgn_data);
-                match result {
+                match file.read_to_string(&mut pgn_data) {
                     Ok(_) => {
-                        let game = parse_pgn(pgn_data);
-                        match game {
-                            Some(x) => {
-                                println!("{:?} {}", x.total_games, url);
-                                match output_file.write_all(&x.data) {
-                                    Err(e) => {
-                                        println!("Error: {:?}", e);
-                                        return Err(e.into());
-                                    },
-                                    _ => {}
-                                }
+                        match parse_pgn(pgn_data, output_file) {
+                            Ok(total_games) => {
+                                println!("{:?} {}", total_games, url);
                             },
-                            _ => {
-                                println!("Failed to parse game.");
+                            Err(e) => {
+                                println!("Unexpected error: {:?}", e);
                             },
                         }
                     },
@@ -171,19 +168,14 @@ fn convert_from_url(url: &str, output_file: &mut std::fs::File) -> Result<()> {
                 return Err(e.into());
             },
         };
-        let game = parse_pgn(pgn_data);
-        match game {
-            Some(x) => {
-                println!("{:?} {}", x.total_games, url);
-                match output_file.write_all(&x.data) {
-                    Err(e) => {
-                        println!("Error: {:?}", e);
-                        return Err(e.into());
-                    },
-                    _ => {}
-                }
+
+        match parse_pgn(pgn_data, output_file) {
+            Ok(total_games) => {
+                println!("{:?} {}", total_games, url);
             },
-            _ => println!("Unexpected error."),
+            Err(e) => {
+                println!("Unexpected error: {:?}", e);
+            },
         }
     } else {
         println!("Error unexpected file type.");
