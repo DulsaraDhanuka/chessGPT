@@ -110,7 +110,7 @@ fn main() {
                                                     match file.write_all(&visitor.output) {
                                                         Ok(_) => {
                                                             
-                                                            println!("Done {} - Games: {}, Ply: {}", url, visitor.total_games, visitor.total_ply);
+                                                            println!("Done Games: {:0width$}, Ply: {:0width$} - {}", visitor.total_games, visitor.total_ply, url, width=7);
                                                         },
                                                         Err(e) => println!("Error: {}", e),
                                                     }
