@@ -6,7 +6,7 @@ use clap::Parser;
 
 use anyhow::Error;
 use pgn_parser::PgnVisitor;
-use shakmaty::{Move, Outcome};
+use shakmaty::{Color, Move, Outcome};
 use tokenizer::{Token, Tokenizer};
 
 mod utils;
@@ -16,18 +16,24 @@ mod pgn_parser;
 
 struct Visitor<'a> {
     output: Vec<u8>,
-    total_games: u32,
-    total_ply: u32,
     tokenizer: &'a Tokenizer,
+
+    white_winning_games: u32,
+    black_winning_games: u32,
+    draw_games: u32,
+    ply: u32,
 }
 
 impl Visitor<'_> {
     fn new(tokenizer: &Tokenizer) -> Visitor {
         Visitor {
             output: Vec::new(),
-            total_games: 0,
-            total_ply: 0,
             tokenizer,
+
+            white_winning_games: 0,
+            black_winning_games: 0,
+            draw_games: 0,
+            ply: 0,
         }
     }
 }
@@ -35,7 +41,16 @@ impl Visitor<'_> {
 impl PgnVisitor for Visitor<'_> {
     fn begin_game(&mut self, _outcome: Outcome) -> Result<Vec<Token>, Error> { 
         match self.tokenizer.game_start_token(Option::Some(_outcome)) {
-            Ok(v) => Ok(Vec::from([v])),
+            Ok(v) => {
+                match _outcome {
+                    Outcome::Decisive { winner } => match winner {
+                        Color::White => self.white_winning_games += 1,
+                        Color::Black => self.black_winning_games += 1,
+                    },
+                    Outcome::Draw => self.draw_games += 1,
+                }
+                Ok(Vec::from([v]))
+            },
             Err(e) => Err(e),
         }
     }
@@ -43,7 +58,7 @@ impl PgnVisitor for Visitor<'_> {
     fn game_move(&mut self, _move: Move) -> Result<Vec<Token>, Error> {
         match self.tokenizer.uci_to_token(_move.to_uci(shakmaty::CastlingMode::Standard)) {
             Ok(v) => {
-                self.total_ply += 1;
+                self.ply += 1;
                 Ok(Vec::from([v]))
             },
             Err(e) => Err(e),
@@ -58,7 +73,6 @@ impl PgnVisitor for Visitor<'_> {
         for tok in _game {
             self.output.extend(tok.value.to_be_bytes());
         }
-        self.total_games += 1;
         Ok(())
     }
 }
@@ -78,6 +92,24 @@ struct Args {
     encoder_output_path: String,
 }
 
+struct Stats {
+    white_winning_games: u32,
+    black_winning_games: u32,
+    draw_games: u32,
+    ply: u32,
+}
+
+impl Stats {
+    fn new() -> Stats {
+        Stats {
+            white_winning_games: 0,
+            black_winning_games: 0,
+            draw_games: 0,
+            ply: 0,
+        }
+    }
+}
+
 fn main() {
     let args = Args::parse();
 
@@ -85,6 +117,8 @@ fn main() {
     tokenizer.create_token_map();
     tokenizer.save(&args.encoder_output_path);
     let tokenizer = Arc::new(tokenizer);
+
+    let stats = Arc::new(Mutex::new(Stats::new()));
 
     match utils::read_urls_from_input_json(args.input) {
         Ok(urls) => {            
@@ -97,6 +131,7 @@ fn main() {
             for url in urls {
                 let file = Arc::clone(&file);
                 let tokenizer = Arc::clone(&tokenizer);
+                let stats = Arc::clone(&stats);
                 let thread = thread::spawn(move || {
                     match pgn_reader::download_bytes_from_url(url.clone()) {
                         Ok(content) => {
@@ -109,8 +144,17 @@ fn main() {
                                                 Ok(mut file) => {
                                                     match file.write_all(&visitor.output) {
                                                         Ok(_) => {
-                                                            
-                                                            println!("Games: {:0width$}, Ply: {:0width$} - {}", visitor.total_games, visitor.total_ply, url, width=13);
+                                                            match stats.lock() {
+                                                                Ok(mut stats) => {
+                                                                    stats.white_winning_games += visitor.white_winning_games;
+                                                                    stats.black_winning_games += visitor.black_winning_games;
+                                                                    stats.draw_games += visitor.draw_games;
+                                                                    stats.ply += visitor.ply;
+                                                                    let total_games = visitor.white_winning_games + visitor.black_winning_games + visitor.draw_games;
+                                                                    println!("Games: {:0width$}, Ply: {:0width$} - {}", total_games, visitor.ply, url, width=15);
+                                                                },
+                                                                Err(e) => println!("Error: {}", e),
+                                                            }
                                                         },
                                                         Err(e) => println!("Error: {}", e),
                                                     }
@@ -136,6 +180,12 @@ fn main() {
         },
         Err(e) => panic!("Error: {}", e)
     }
+
+    let stats = stats.lock().unwrap();
+    println!("Total white winning games - {}", stats.white_winning_games);
+    println!("Total black winning games - {}", stats.black_winning_games);
+    println!("Total drawn games         - {}", stats.draw_games);
+    println!("Total plys                - {}", stats.ply);
 
     /*
 

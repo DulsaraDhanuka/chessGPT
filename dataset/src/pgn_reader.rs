@@ -5,7 +5,7 @@ use bytes::{Bytes, Buf};
 pub fn download_bytes_from_url(url: String) -> Result<Bytes, Error> {
     let client = reqwest::blocking::ClientBuilder::new().timeout(Duration::from_secs(600)).build()?;
     let response = client.get(url).send();
-    //let response = reqwest::blocking::get(url);
+    
     return match response {
         Ok(response) => {
             let body = response.bytes();
