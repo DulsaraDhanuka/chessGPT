@@ -17,6 +17,7 @@ mod pgn_parser;
 struct Visitor<'a> {
     output: Vec<u8>,
     total_games: u32,
+    total_ply: u32,
     tokenizer: &'a Tokenizer,
 }
 
@@ -25,6 +26,7 @@ impl Visitor<'_> {
         Visitor {
             output: Vec::new(),
             total_games: 0,
+            total_ply: 0,
             tokenizer,
         }
     }
@@ -40,7 +42,10 @@ impl PgnVisitor for Visitor<'_> {
 
     fn game_move(&mut self, _move: Move) -> Result<Vec<Token>, Error> {
         match self.tokenizer.uci_to_token(_move.to_uci(shakmaty::CastlingMode::Standard)) {
-            Ok(v) => Ok(Vec::from([v])),
+            Ok(v) => {
+                self.total_ply += 1;
+                Ok(Vec::from([v]))
+            },
             Err(e) => Err(e),
         }
     }
@@ -105,7 +110,7 @@ fn main() {
                                                     match file.write_all(&visitor.output) {
                                                         Ok(_) => {
                                                             
-                                                            println!("Done {} - {}", url, visitor.total_games);
+                                                            println!("Done {} - Games: {}, Ply: {}", url, visitor.total_games, visitor.total_ply);
                                                         },
                                                         Err(e) => println!("Error: {}", e),
                                                     }
