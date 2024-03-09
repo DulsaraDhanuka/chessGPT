@@ -1,21 +1,34 @@
-use std::{io::Read, time::Duration};
+use std::{fs, io::Read, path::Path, time::Duration};
 use anyhow::{anyhow, Error};
 use bytes::{Bytes, Buf};
 
 pub fn download_bytes_from_url(url: String) -> Result<Bytes, Error> {
-    let client = reqwest::blocking::ClientBuilder::new().timeout(Duration::from_secs(600)).build()?;
-    let response = client.get(url).send();
-    
-    return match response {
-        Ok(response) => {
-            let body = response.bytes();
-            match body {
-                Ok(body) => Ok(body),
-                Err(err) => Err(err.into())
-            }
-        },
-        Err(err) => Err(err.into())
-    };
+    if Path::new(&url).exists() {
+        match fs::OpenOptions::new().create(true).append(true).open(&url) {
+            Ok(mut file) => {
+                let mut bytes = Vec::new();
+                match file.read_to_end(&mut bytes) {
+                    Ok(_) => return Ok(Bytes::from(bytes)),
+                    Err(e) => return Err(e.into())
+                }
+            },
+            Err(e) => return Err(e.into())
+        }
+    } else {
+        let client = reqwest::blocking::ClientBuilder::new().timeout(Duration::from_secs(600)).build()?;
+        let response = client.get(url).send();
+        
+        return match response {
+            Ok(response) => {
+                let body = response.bytes();
+                match body {
+                    Ok(body) => Ok(body),
+                    Err(err) => Err(err.into())
+                }
+            },
+            Err(err) => Err(err.into())
+        };
+    }
 }
 
 pub fn pgn_string_from_bytes(url: String, bytes: Bytes) -> Result<String, Error> {
