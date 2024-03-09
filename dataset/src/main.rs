@@ -17,6 +17,9 @@ mod pgn_parser;
 struct Visitor<'a> {
     output: Vec<u8>,
     tokenizer: &'a Tokenizer,
+    hash_collection: &'a mut Vec<String>,
+    current_outcome: Option<Outcome>,
+    current_ply: u32,
 
     white_winning_games: u32,
     black_winning_games: u32,
@@ -25,10 +28,13 @@ struct Visitor<'a> {
 }
 
 impl Visitor<'_> {
-    fn new(tokenizer: &Tokenizer) -> Visitor {
+    fn new<'a>(tokenizer: &'a Tokenizer, hash_collection: &'a mut Vec<String>) -> Visitor<'a> {
         Visitor {
             output: Vec::new(),
             tokenizer,
+            hash_collection,
+            current_outcome: Option::None,
+            current_ply: 0,
 
             white_winning_games: 0,
             black_winning_games: 0,
@@ -42,13 +48,7 @@ impl PgnVisitor for Visitor<'_> {
     fn begin_game(&mut self, _outcome: Outcome) -> Result<Vec<Token>, Error> { 
         match self.tokenizer.game_start_token(Option::Some(_outcome)) {
             Ok(v) => {
-                match _outcome {
-                    Outcome::Decisive { winner } => match winner {
-                        Color::White => self.white_winning_games += 1,
-                        Color::Black => self.black_winning_games += 1,
-                    },
-                    Outcome::Draw => self.draw_games += 1,
-                }
+                self.current_outcome = Some(_outcome);
                 Ok(Vec::from([v]))
             },
             Err(e) => Err(e),
@@ -58,7 +58,7 @@ impl PgnVisitor for Visitor<'_> {
     fn game_move(&mut self, _move: Move) -> Result<Vec<Token>, Error> {
         match self.tokenizer.uci_to_token(_move.to_uci(shakmaty::CastlingMode::Standard)) {
             Ok(v) => {
-                self.ply += 1;
+                self.current_ply += 1;
                 Ok(Vec::from([v]))
             },
             Err(e) => Err(e),
@@ -70,9 +70,34 @@ impl PgnVisitor for Visitor<'_> {
     }
 
     fn save_game(&mut self, _game: Vec<Token>) -> Result<(), Error> {
+        let mut game: Vec<u8> = Vec::new();
         for tok in _game {
-            self.output.extend(tok.value.to_be_bytes());
+            game.extend(tok.value.to_be_bytes());
         }
+        
+        let hash = sha256::digest(&game);
+        if !self.hash_collection.contains(&hash) {
+            self.output.extend(game);
+            self.hash_collection.push(hash);
+
+            match self.current_outcome {
+                Some(outcome) => match outcome {
+                    Outcome::Decisive { winner } => match winner {
+                        Color::White => self.white_winning_games += 1,
+                        Color::Black => self.black_winning_games += 1,
+                    },
+                    Outcome::Draw => self.draw_games += 1,
+                },
+                None => {}
+            }
+
+            self.ply += self.current_ply;
+            self.current_ply = 0;
+            self.current_outcome = Option::None;
+        } else {
+            println!("Duplicate game found");
+        }
+
         Ok(())
     }
 }
@@ -119,6 +144,8 @@ fn main() {
     let tokenizer = Arc::new(tokenizer);
 
     let stats = Arc::new(Mutex::new(Stats::new()));
+    let hash_collection: Vec<String> = Vec::new();
+    let hash_collection = Arc::new(Mutex::new(hash_collection));
 
     match utils::read_urls_from_input_json(args.input) {
         Ok(urls) => {            
@@ -132,26 +159,32 @@ fn main() {
                 let file = Arc::clone(&file);
                 let tokenizer = Arc::clone(&tokenizer);
                 let stats = Arc::clone(&stats);
+                let hash_collection = Arc::clone(&hash_collection);
                 let thread = thread::spawn(move || {
                     match pgn_reader::download_bytes_from_url(url.clone()) {
                         Ok(content) => {
                             match pgn_reader::pgn_string_from_bytes(url.clone(), content) {
                                 Ok(pgn_string) => {
-                                    let mut visitor = Visitor::new(&tokenizer);
-                                    match pgn_parser::visit_games_from_pgn_string(pgn_string, &mut visitor) {
-                                        Ok(_) => {
-                                            match file.lock() {
-                                                Ok(mut file) => {
-                                                    match file.write_all(&visitor.output) {
-                                                        Ok(_) => {
-                                                            match stats.lock() {
-                                                                Ok(mut stats) => {
-                                                                    stats.white_winning_games += visitor.white_winning_games;
-                                                                    stats.black_winning_games += visitor.black_winning_games;
-                                                                    stats.draw_games += visitor.draw_games;
-                                                                    stats.ply += visitor.ply;
-                                                                    let total_games = visitor.white_winning_games + visitor.black_winning_games + visitor.draw_games;
-                                                                    println!("Games: {:0width$}, Ply: {:0width$} - {}", total_games, visitor.ply, url, width=15);
+                                    match hash_collection.lock() {
+                                        Ok(mut hash_collection) => {
+                                            let mut visitor = Visitor::new(&tokenizer, &mut hash_collection);
+                                            match pgn_parser::visit_games_from_pgn_string(pgn_string, &mut visitor) {
+                                                Ok(_) => {
+                                                    match file.lock() {
+                                                        Ok(mut file) => {
+                                                            match file.write_all(&visitor.output) {
+                                                                Ok(_) => {
+                                                                    match stats.lock() {
+                                                                        Ok(mut stats) => {
+                                                                            stats.white_winning_games += visitor.white_winning_games;
+                                                                            stats.black_winning_games += visitor.black_winning_games;
+                                                                            stats.draw_games += visitor.draw_games;
+                                                                            stats.ply += visitor.ply;
+                                                                            let total_games = visitor.white_winning_games + visitor.black_winning_games + visitor.draw_games;
+                                                                            println!("Games: {:0width$}, Ply: {:0width$} - {}", total_games, visitor.ply, url, width=15);
+                                                                        },
+                                                                        Err(e) => println!("Error: {}", e),
+                                                                    }
                                                                 },
                                                                 Err(e) => println!("Error: {}", e),
                                                             }
