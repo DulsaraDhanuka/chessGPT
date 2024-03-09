@@ -54,7 +54,7 @@ impl<V: PgnVisitor> Visitor for OrigPgnVisitor<'_, V> {
             },
             Err(e) => {
                 self.skip_current_game = true;
-                println!("Error: {}", e);
+                //println!("Error: {}", e);
             },
         }
     }

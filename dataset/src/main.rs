@@ -24,6 +24,7 @@ struct Visitor<'a> {
     white_winning_games: u32,
     black_winning_games: u32,
     draw_games: u32,
+    duplicate_games: u32,
     ply: u32,
 }
 
@@ -39,6 +40,7 @@ impl Visitor<'_> {
             white_winning_games: 0,
             black_winning_games: 0,
             draw_games: 0,
+            duplicate_games: 0,
             ply: 0,
         }
     }
@@ -95,7 +97,8 @@ impl PgnVisitor for Visitor<'_> {
             self.current_ply = 0;
             self.current_outcome = Option::None;
         } else {
-            println!("Duplicate game found");
+            //println!("Duplicate game found");
+            self.duplicate_games += 1;
         }
 
         Ok(())
@@ -121,6 +124,7 @@ struct Stats {
     white_winning_games: u32,
     black_winning_games: u32,
     draw_games: u32,
+    duplicate_games: u32,
     ply: u32,
 }
 
@@ -130,6 +134,7 @@ impl Stats {
             white_winning_games: 0,
             black_winning_games: 0,
             draw_games: 0,
+            duplicate_games: 0,
             ply: 0,
         }
     }
@@ -179,9 +184,10 @@ fn main() {
                                                                             stats.white_winning_games += visitor.white_winning_games;
                                                                             stats.black_winning_games += visitor.black_winning_games;
                                                                             stats.draw_games += visitor.draw_games;
+                                                                            stats.duplicate_games += visitor.duplicate_games;
                                                                             stats.ply += visitor.ply;
                                                                             let total_games = visitor.white_winning_games + visitor.black_winning_games + visitor.draw_games;
-                                                                            println!("Games: {:0width$}, Ply: {:0width$} - {}", total_games, visitor.ply, url, width=15);
+                                                                            println!("Games: {:0width$}, Dup games: {:0width$}, Ply: {:0width$} - {}", total_games, visitor.duplicate_games, visitor.ply, url, width=15);
                                                                         },
                                                                         Err(e) => println!("Error: {}", e),
                                                                     }
@@ -218,6 +224,7 @@ fn main() {
     println!("Total white winning games - {}", stats.white_winning_games);
     println!("Total black winning games - {}", stats.black_winning_games);
     println!("Total drawn games         - {}", stats.draw_games);
+    println!("Total duplicate games     - {}", stats.duplicate_games);
     println!("Total plys                - {}", stats.ply);
 
     /*
