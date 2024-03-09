@@ -204,7 +204,7 @@ fn main() {
                                         Err(e) => println!("Error: {}", e),
                                     }
                                 },
-                                Err(e) => {/*println!("Error: {}", e)*/},
+                                Err(e) => {println!("Error: {} - {}", &url, e)},
                             };        
                         },
                         Err(e) => println!("Error: {} - {}", &url, e),
