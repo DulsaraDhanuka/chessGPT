@@ -4,7 +4,7 @@ use bytes::{Bytes, Buf};
 
 pub fn download_bytes_from_url(url: String) -> Result<Bytes, Error> {
     if Path::new(&url).exists() {
-        match fs::OpenOptions::new().create(true).append(true).open(&url) {
+        match fs::OpenOptions::new().read(true).open(&url) {
             Ok(mut file) => {
                 let mut bytes = Vec::new();
                 match file.read_to_end(&mut bytes) {
