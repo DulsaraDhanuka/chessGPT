@@ -8,6 +8,7 @@ use anyhow::Error;
 use pgn_parser::PgnVisitor;
 use shakmaty::{Color, Move, Outcome};
 use tokenizer::{Token, Tokenizer};
+use std::collections::HashSet;
 
 mod utils;
 mod tokenizer;
@@ -17,6 +18,7 @@ mod pgn_parser;
 struct Visitor<'a> {
     output: Vec<u8>,
     tokenizer: &'a Tokenizer,
+    hash_collection: Arc<Mutex<HashSet<String>>>,
     current_outcome: Option<Outcome>,
     current_ply: u32,
 
@@ -28,10 +30,11 @@ struct Visitor<'a> {
 }
 
 impl Visitor<'_> {
-    fn new<'a>(tokenizer: &'a Tokenizer) -> Visitor<'a> {
+    fn new<'a>(tokenizer: &'a Tokenizer, hash_collection: Arc<Mutex<HashSet<String>>>) -> Visitor<'a> {
         Visitor {
             output: Vec::new(),
             tokenizer,
+            hash_collection,
             current_outcome: Option::None,
             current_ply: 0,
 
@@ -70,25 +73,37 @@ impl PgnVisitor for Visitor<'_> {
     }
 
     fn save_game(&mut self, _game: Vec<Token>) -> Result<(), Error> {
-        let mut game: Vec<u8> = Vec::new();
-        for tok in _game {
-            game.extend(tok.value.to_be_bytes());
-        }
-        
-        self.output.extend(game);
+        match self.hash_collection.lock() {
+            Ok(mut hash_collection) => {
+                let mut game: Vec<u8> = Vec::new();
+                for tok in _game {
+                    game.extend(tok.value.to_be_bytes());
+                }
 
-        match self.current_outcome {
-            Some(outcome) => match outcome {
-                Outcome::Decisive { winner } => match winner {
-                    Color::White => self.white_winning_games += 1,
-                    Color::Black => self.black_winning_games += 1,
-                },
-                Outcome::Draw => self.draw_games += 1,
+                let hash = sha256::digest(game.clone());
+                
+                if !hash_collection.contains(&hash) {
+                    hash_collection.insert(hash);
+                    self.output.extend(game);
+                    match self.current_outcome {
+                        Some(outcome) => match outcome {
+                            Outcome::Decisive { winner } => match winner {
+                                Color::White => self.white_winning_games += 1,
+                                Color::Black => self.black_winning_games += 1,
+                            },
+                            Outcome::Draw => self.draw_games += 1,
+                        },
+                        None => {}
+                    }
+                    self.ply += self.current_ply;
+                } else {
+                    // Duplicate game!!!
+                    self.duplicate_games += 1;
+                }
             },
-            None => {}
+            Err(e) => println!("Error: {e}"),
         }
 
-        self.ply += self.current_ply;
         self.current_ply = 0;
         self.current_outcome = Option::None;
 
@@ -141,6 +156,8 @@ fn main() {
 
     let stats = Arc::new(Mutex::new(Stats::new()));
 
+    let hash_collection = Arc::new(Mutex::new(HashSet::<String>::new()));
+
     match utils::read_urls_from_input_json(args.input) {
         Ok(urls) => {            
             let file = Arc::new(Mutex::new(fs::OpenOptions::new()
@@ -153,12 +170,13 @@ fn main() {
                 let file = Arc::clone(&file);
                 let tokenizer = Arc::clone(&tokenizer);
                 let stats = Arc::clone(&stats);
+                let hash_collection = Arc::clone(&hash_collection);
                 let thread = thread::spawn(move || {
                     match pgn_reader::download_bytes_from_url(url.clone()) {
                         Ok(content) => {
                             match pgn_reader::pgn_string_from_bytes(url.clone(), content) {
                                 Ok(pgn_string) => {
-                                    let mut visitor = Visitor::new(&tokenizer);
+                                    let mut visitor = Visitor::new(&tokenizer, hash_collection);
                                     match pgn_parser::visit_games_from_pgn_string(pgn_string, &mut visitor) {
                                         Ok(_) => {
                                             match file.lock() {
