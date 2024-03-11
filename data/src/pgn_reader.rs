@@ -45,19 +45,27 @@ pub fn pgn_string_from_bytes_pgn(bytes: Bytes) -> Result<String, Error> {
     let pgn_string = String::from_utf8(bytes.to_vec());
     return match pgn_string {
         Ok(pgn_string) => Ok(pgn_string),
-        Err(e) => Err(e.into()),
+        Err(e) => {
+            let pgn_string = unsafe{String::from_utf8_unchecked(bytes.to_vec())};
+            Ok(pgn_string)
+            //Err(e.into())
+        },
     };
 }
 
 pub fn pgn_string_from_bytes_zip(bytes: Bytes) -> Result<String, Error> {
-    let mut pgn_data = String::new();
     let mut zip_reader: Box<dyn Read> = Box::new(bytes.reader()) as Box<dyn Read>; 
     return match zip::read::read_zipfile_from_stream(&mut zip_reader) {
         Ok(Some(mut file)) => {
-            match file.read_to_string(&mut pgn_data) {
+            /*match file.read_to_string(&mut pgn_data) {
                 Ok(_) => Ok(pgn_data),
                 Err(e) => Err(e.into()),
-            }
+            }*/
+
+            let mut bytes = Vec::<u8>::new();
+            file.read_to_end(&mut bytes)?;
+
+            pgn_string_from_bytes_pgn(bytes::Bytes::from(bytes))
         }
         Ok(None) => Err(anyhow!("No files found in zip archive")),
         Err(e) => Err(e.into())
