@@ -1,5 +1,5 @@
 use std::sync::{Arc, Mutex};
-use std::thread::{self, JoinHandle};
+//use std::thread::{self, JoinHandle};
 use std::fs;
 use std::io::Write;
 use clap::Parser;
@@ -131,6 +131,9 @@ struct Args {
 
     #[arg(long, help="Index save path")]
     index_output: String,
+
+    #[arg(long, help="Number of worker threads")]
+    n_workers: u16,
 }
 
 struct Stats {
@@ -156,6 +159,8 @@ impl Stats {
 fn main() {
     let args = Args::parse();
 
+    let pool = rayon::ThreadPoolBuilder::new().num_threads(args.n_workers as usize).build().unwrap();
+
     let mut tokenizer = tokenizer::Tokenizer::new();
     tokenizer.create_token_map();
     tokenizer.save(&args.encoder_output);
@@ -178,7 +183,6 @@ fn main() {
                 .append(true)
                 .open(&args.output).expect("Error occured while creating output file")));
 
-            let mut threads: Vec<JoinHandle<()>> = Vec::new();
             for url in urls {
                 let file = Arc::clone(&file);
                 let game_indexes_file = Arc::clone(&game_indexes_file);
@@ -186,7 +190,8 @@ fn main() {
                 let stats = Arc::clone(&stats);
                 let hash_collection = Arc::clone(&hash_collection);
                 let global_game_idx = Arc::clone(&global_game_idx);
-                let thread = thread::spawn(move || {
+
+                pool.install(move || {
                     match pgn_reader::download_bytes_from_url(url.clone()) {
                         Ok(content) => {
                             match pgn_reader::pgn_string_from_bytes(url.clone(), content) {
@@ -245,11 +250,6 @@ fn main() {
                         Err(e) => println!("Error: {} - {}", &url, e),
                     };
                 });
-                threads.push(thread);
-            }
-
-            for thread in threads {
-                thread.join().unwrap();
             }
         },
         Err(e) => panic!("Error: {}", e)
