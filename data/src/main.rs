@@ -165,7 +165,11 @@ fn main() {
 
     let hash_collection = Arc::new(Mutex::new(HashSet::<String>::new()));
     let global_game_idx = Arc::new(Mutex::new(u64::MIN));
-    let game_indexes = Arc::new(Mutex::new(Vec::<u64>::new()));
+
+    let game_indexes_file = Arc::new(Mutex::new(fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&args.index_output).expect("Error occured while creating index output file")));
 
     match utils::read_urls_from_input_json(args.input) {
         Ok(urls) => {            
@@ -177,11 +181,11 @@ fn main() {
             let mut threads: Vec<JoinHandle<()>> = Vec::new();
             for url in urls {
                 let file = Arc::clone(&file);
+                let game_indexes_file = Arc::clone(&game_indexes_file);
                 let tokenizer = Arc::clone(&tokenizer);
                 let stats = Arc::clone(&stats);
                 let hash_collection = Arc::clone(&hash_collection);
                 let global_game_idx = Arc::clone(&global_game_idx);
-                let game_indexes = Arc::clone(&game_indexes);
                 let thread = thread::spawn(move || {
                     match pgn_reader::download_bytes_from_url(url.clone()) {
                         Ok(content) => {
@@ -195,19 +199,22 @@ fn main() {
                                                     match file.write_all(&visitor.output) {
                                                         Ok(_) => {
                                                             match global_game_idx.lock() {
-                                                                Ok(mut global_game_idx) => {
-                                                                    match game_indexes.lock() {
-                                                                        Ok(mut game_indexes) => {
+                                                                Ok(mut global_game_idx) => {                                                                    
+                                                                    match game_indexes_file.lock() {
+                                                                        Ok(mut game_indexes_file) => {
+                                                                            let mut indexes = Vec::<u8>::new();
                                                                             for idx in visitor.game_indexes {
-                                                                                game_indexes.push(idx + *global_game_idx);
+                                                                                indexes.extend((idx + *global_game_idx).to_be_bytes());
                                                                             }
-
-                                                                            *global_game_idx += visitor.output.len() as u64;
+                                                                            match game_indexes_file.write_all(&indexes) {
+                                                                                Ok(_) => *global_game_idx += visitor.output.len() as u64,
+                                                                                Err(e) => panic!("Unable to write to file, {}, Error: {}", &url, e),
+                                                                            }
                                                                         },
-                                                                        Err(e) => println!("Error: {}", e),
+                                                                        Err(e) => panic!("Unable to lock game_indexes_file, {}, Error: {}", &url, e),
                                                                     }
                                                                 },
-                                                                Err(e) => println!("Error: {}", e),
+                                                                Err(e) => panic!("Unable to lock global_game_idx, {}, Error: {}", &url, e),
                                                             }
 
                                                             match stats.lock() {
@@ -223,10 +230,10 @@ fn main() {
                                                                 Err(e) => println!("Error: {}", e),
                                                             }
                                                         },
-                                                        Err(e) => println!("Error: {}", e),
+                                                        Err(e) => panic!("Unable to write to file, {}, Error: {}", &url, e),
                                                     }
                                                 },
-                                                Err(e) => println!("Error: {}", e),
+                                                Err(e) => panic!("Unable to lock file, {}, Error: {}", &url, e),
                                             }
                                         },
                                         Err(e) => println!("Error: {}", e),
@@ -254,19 +261,6 @@ fn main() {
     println!("Total drawn games         - {}", stats.draw_games);
     println!("Total duplicate games     - {}", stats.duplicate_games);
     println!("Total plys                - {}", stats.ply);
-
-    let game_indexes_locked = game_indexes.lock().unwrap();
-    let mut game_indexes = Vec::<u8>::new();
-
-    for idx in game_indexes_locked.iter() {
-        game_indexes.extend(idx.to_be_bytes());
-    }
-
-    let mut file = fs::OpenOptions::new()
-                .create(true)
-                .append(true)
-                .open(&args.index_output).expect("Error occured while creating index output file");
-    file.write_all(&game_indexes).expect("Error occured while writing to index output file");
 
     /*
 
