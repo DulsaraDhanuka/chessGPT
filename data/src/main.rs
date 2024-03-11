@@ -19,6 +19,7 @@ struct Visitor<'a> {
     output: Vec<u8>,
     tokenizer: &'a Tokenizer,
     hash_collection: Arc<Mutex<HashSet<String>>>,
+    game_indexes: Vec<u64>,
     current_outcome: Option<Outcome>,
     current_ply: u32,
 
@@ -35,6 +36,7 @@ impl Visitor<'_> {
             output: Vec::new(),
             tokenizer,
             hash_collection,
+            game_indexes: Vec::new(),
             current_outcome: Option::None,
             current_ply: 0,
 
@@ -84,6 +86,8 @@ impl PgnVisitor for Visitor<'_> {
                 
                 if !hash_collection.contains(&hash) {
                     hash_collection.insert(hash);
+                    self.game_indexes.push(self.output.len() as u64);
+
                     self.output.extend(game);
                     match self.current_outcome {
                         Some(outcome) => match outcome {
@@ -116,14 +120,17 @@ impl PgnVisitor for Visitor<'_> {
 #[command(version, about, long_about = None)]
 struct Args {
 
-    #[arg(short, long, help="Input path of a json containing input file urls")]
+    #[arg(long, help="Input path of a json containing input file urls")]
     input: String,
 
-    #[arg(short, long, help="Output path of the save file")]
+    #[arg(long, help="Output path of the save file")]
     output: String,
 
-    #[arg(short, long, help="Encoder save path")]
-    encoder_output_path: String,
+    #[arg(long, help="Encoder save path")]
+    encoder_output: String,
+
+    #[arg(long, help="Index save path")]
+    index_output: String,
 }
 
 struct Stats {
@@ -151,12 +158,14 @@ fn main() {
 
     let mut tokenizer = tokenizer::Tokenizer::new();
     tokenizer.create_token_map();
-    tokenizer.save(&args.encoder_output_path);
+    tokenizer.save(&args.encoder_output);
     let tokenizer = Arc::new(tokenizer);
 
     let stats = Arc::new(Mutex::new(Stats::new()));
 
     let hash_collection = Arc::new(Mutex::new(HashSet::<String>::new()));
+    let global_game_idx = Arc::new(Mutex::new(u64::MIN));
+    let game_indexes = Arc::new(Mutex::new(Vec::<u64>::new()));
 
     match utils::read_urls_from_input_json(args.input) {
         Ok(urls) => {            
@@ -171,6 +180,8 @@ fn main() {
                 let tokenizer = Arc::clone(&tokenizer);
                 let stats = Arc::clone(&stats);
                 let hash_collection = Arc::clone(&hash_collection);
+                let global_game_idx = Arc::clone(&global_game_idx);
+                let game_indexes = Arc::clone(&game_indexes);
                 let thread = thread::spawn(move || {
                     match pgn_reader::download_bytes_from_url(url.clone()) {
                         Ok(content) => {
@@ -183,6 +194,22 @@ fn main() {
                                                 Ok(mut file) => {
                                                     match file.write_all(&visitor.output) {
                                                         Ok(_) => {
+                                                            match global_game_idx.lock() {
+                                                                Ok(mut global_game_idx) => {
+                                                                    match game_indexes.lock() {
+                                                                        Ok(mut game_indexes) => {
+                                                                            for idx in visitor.game_indexes {
+                                                                                game_indexes.push(idx + *global_game_idx);
+                                                                            }
+
+                                                                            *global_game_idx += visitor.output.len() as u64;
+                                                                        },
+                                                                        Err(e) => println!("Error: {}", e),
+                                                                    }
+                                                                },
+                                                                Err(e) => println!("Error: {}", e),
+                                                            }
+
                                                             match stats.lock() {
                                                                 Ok(mut stats) => {
                                                                     stats.white_winning_games += visitor.white_winning_games;
@@ -227,6 +254,19 @@ fn main() {
     println!("Total drawn games         - {}", stats.draw_games);
     println!("Total duplicate games     - {}", stats.duplicate_games);
     println!("Total plys                - {}", stats.ply);
+
+    let game_indexes_locked = game_indexes.lock().unwrap();
+    let mut game_indexes = Vec::<u8>::new();
+
+    for idx in game_indexes_locked.iter() {
+        game_indexes.extend(idx.to_be_bytes());
+    }
+
+    let mut file = fs::OpenOptions::new()
+                .create(true)
+                .append(true)
+                .open(&args.index_output).expect("Error occured while creating index output file");
+    file.write_all(&game_indexes).expect("Error occured while writing to index output file");
 
     /*
 
